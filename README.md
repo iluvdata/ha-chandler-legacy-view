@@ -50,3 +50,7 @@ configuration options will follow as device details become available.
 Contributions are welcome! The goal is to expand the integration to expose the
 valve state (e.g. service mode, regeneration cycles) and diagnostics as the
 device protocol becomes better understood.
+
+### Local Codex initialization prompt
+
+> Read AGENTS.md and README.md to familiarize yourself with this repository. After performing any work which resulted in uncommitted changes to repository files, provide a commit message for the work. Commit messages should be provided in fenced code blocks for easy copy/paste.
