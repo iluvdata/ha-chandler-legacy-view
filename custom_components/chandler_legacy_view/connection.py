@@ -597,13 +597,11 @@ class ValveConnection:
             )
             raise
         finally:
-            reset_packet_sent = False
-            with contextlib.suppress(Exception):
-                reset_packet_sent = await self._async_send_reset_buffer_packet(client)
-            if reset_packet_sent:
-                await asyncio.sleep(0.1)
-            with contextlib.suppress(Exception):
-                await client.disconnect()
+            cancelled = False
+            try:
+                await self._async_disconnect_client(client)
+            except asyncio.CancelledError:
+                cancelled = True
 
             self._persistent_task = None
 
@@ -613,6 +611,9 @@ class ValveConnection:
             ):
                 self._set_connection_cooldown()
                 self.schedule_poll()
+
+            if cancelled:
+                raise
 
     async def async_unload(self) -> None:
         """Prevent future polls and wait for any active poll to finish."""
@@ -728,15 +729,7 @@ class ValveConnection:
                     cleanup_client = None
             finally:
                 if cleanup_client is not None:
-                    reset_packet_sent = False
-                    with contextlib.suppress(Exception):
-                        reset_packet_sent = await self._async_send_reset_buffer_packet(
-                            cleanup_client
-                        )
-                    if reset_packet_sent:
-                        await asyncio.sleep(0.1)
-                    with contextlib.suppress(Exception):
-                        await cleanup_client.disconnect()
+                    await self._async_disconnect_client(cleanup_client)
         finally:
             if connection_attempted:
                 self._set_connection_cooldown()
@@ -1087,6 +1080,35 @@ class ValveConnection:
             )
 
         return sent
+
+    async def _async_disconnect_client(self, client: BaseBleakClient) -> None:
+        """Disconnect from the valve without being interrupted by cancellation."""
+
+        async def _cleanup() -> None:
+            reset_packet_sent = False
+            try:
+                reset_packet_sent = await self._async_send_reset_buffer_packet(client)
+            except asyncio.CancelledError:
+                reset_packet_sent = False
+            except Exception:
+                reset_packet_sent = False
+
+            if reset_packet_sent:
+                try:
+                    await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+
+            try:
+                await client.disconnect()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        await asyncio.shield(_cleanup())
 
     async def _async_request_device_list(
         self, client: BaseBleakClient
