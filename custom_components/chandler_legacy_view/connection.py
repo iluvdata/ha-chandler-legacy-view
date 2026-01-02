@@ -2216,6 +2216,11 @@ class ValveConnectionManager:
         )
         self._connections.clear()
 
+    async def async_shutdown(self) -> None:
+        """Best-effort cleanup when Home Assistant stops."""
+
+        await asyncio.shield(self.async_unload())
+
     @callback
     def _handle_poll_interval(self, _: datetime) -> None:
         """Poll each known valve on a fixed schedule."""
