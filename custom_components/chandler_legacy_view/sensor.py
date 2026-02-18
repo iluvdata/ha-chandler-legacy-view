@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+
+import datetime
+
 from collections.abc import Callable
 
 from homeassistant.components.bluetooth import BluetoothChange
@@ -11,6 +14,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.components.sensor.const import ATTR_LAST_RESET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
@@ -121,9 +125,7 @@ class ValveDashboardSensor(ChandlerValveEntity, SensorEntity):
         raise NotImplementedError
 
     @callback
-    def _handle_dashboard_update(
-        self, dashboard: ValveDashboardData | None
-    ) -> None:
+    def _handle_dashboard_update(self, dashboard: ValveDashboardData | None) -> None:
         """Handle updates from the dashboard poller."""
 
         self._update_from_dashboard(dashboard, write_state=True)
@@ -134,6 +136,7 @@ class ValvePresentFlowSensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.GALLONS_PER_MINUTE
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -169,9 +172,7 @@ class ValveWaterHardnessSensor(ValveDashboardSensor):
             name_suffix="Water Hardness",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.water_hardness
@@ -233,9 +234,7 @@ class ValveBatteryCapacitySensor(ValveDashboardSensor):
             name_suffix="Battery",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.battery_capacity
@@ -246,6 +245,7 @@ class ValveSoftWaterRemainingSensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.WATER
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -257,9 +257,7 @@ class ValveSoftWaterRemainingSensor(ValveDashboardSensor):
             name_suffix="Soft Water Remaining",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.water_remaining_until_regeneration
@@ -270,6 +268,7 @@ class ValveDaysUntilRegenerationSensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfTime.DAYS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.DURATION
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -286,9 +285,7 @@ class ValveDaysUntilRegenerationSensor(ValveDashboardSensor):
             return "Days Until Regeneration"
         return "Days Until Backwash"
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.air_recharge
@@ -299,6 +296,7 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.WATER
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -310,12 +308,23 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
             name_suffix="Water Usage Today",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
-        return dashboard.water_usage
+
+        value: int = dashboard.water_usage
+
+        if self._attr_extra_state_attributes is None:
+            self._attr_extra_state_attributes = {}
+        if (
+            ATTR_LAST_RESET not in self._attr_extra_state_attributes
+            or value == 0
+            or value < self._attr_native_value
+        ):
+            self._attr_extra_state_attributes[ATTR_LAST_RESET] = datetime.datetime.now(
+                datetime.UTC
+            )
+        return value
 
 
 class ValvePeakFlowTodaySensor(ValveDashboardSensor):
@@ -323,6 +332,7 @@ class ValvePeakFlowTodaySensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.GALLONS_PER_MINUTE
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -523,7 +533,9 @@ async def async_setup_entry(
                     entity.async_handle_bluetooth_update(advertisement, change)
             return
 
-        results = [ensure_callback(advertisement) for ensure_callback in ensure_callbacks]
+        results = [
+            ensure_callback(advertisement) for ensure_callback in ensure_callbacks
+        ]
 
         new_entities: list[SensorEntity] = []
         for _, created in results:
