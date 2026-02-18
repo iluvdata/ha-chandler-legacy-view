@@ -94,9 +94,7 @@ _MAX_AUTHENTICATION_ATTEMPTS = 4
 
 _CRC_RANDOM = SystemRandom()
 _CRC_ALLOWED_POLYNOMIALS: tuple[int, ...] = tuple(
-    polynomial
-    for polynomial in range(1, 256)
-    if 4 <= int.bit_count(polynomial) <= 5
+    polynomial for polynomial in range(1, 256) if 4 <= int.bit_count(polynomial) <= 5
 )
 
 
@@ -224,7 +222,9 @@ class ValveConnection:
         self._authentication_failed = False
         self._authentication_failed_passcode: str | None = None
         self._dashboard_data: ValveDashboardData | None = None
-        self._dashboard_listeners: list[Callable[[ValveDashboardData | None], None]] = []
+        self._dashboard_listeners: list[
+            Callable[[ValveDashboardData | None], None]
+        ] = []
         self._authentication_listeners: list[Callable[[bool], None]] = []
         self._passcode_getter = passcode_getter
         self._crc8 = _ChandlerCrc8()
@@ -318,12 +318,13 @@ class ValveConnection:
     def clear_authentication_lockout(self) -> None:
         """Allow the next connection attempt to retry authentication."""
 
-        if not self._authentication_failed and self._authentication_failed_passcode is None:
+        if (
+            not self._authentication_failed
+            and self._authentication_failed_passcode is None
+        ):
             return
 
-        _LOGGER.debug(
-            "Valve %s authentication lockout manually cleared", self._address
-        )
+        _LOGGER.debug("Valve %s authentication lockout manually cleared", self._address)
         self._set_authentication_failed(False)
 
     async def async_set_persistent_connection_enabled(self, enabled: bool) -> None:
@@ -332,9 +333,7 @@ class ValveConnection:
         if enabled:
             if self._persistent_connection_enabled:
                 return
-            _LOGGER.debug(
-                "Persistent connection requested for valve %s", self._address
-            )
+            _LOGGER.debug("Persistent connection requested for valve %s", self._address)
             self._persistent_connection_enabled = True
             self._cancel_cooldown()
             self._next_connection_time = None
@@ -344,9 +343,7 @@ class ValveConnection:
         if not self._persistent_connection_enabled:
             return
 
-        _LOGGER.debug(
-            "Persistent connection disabled for valve %s", self._address
-        )
+        _LOGGER.debug("Persistent connection disabled for valve %s", self._address)
         self._persistent_connection_enabled = False
         await self._async_stop_persistent_session()
 
@@ -355,7 +352,7 @@ class ValveConnection:
 
         try:
             value = float(seconds)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             value = DEFAULT_PERSISTENT_POLL_INTERVAL_SECONDS
 
         value = max(
@@ -521,17 +518,13 @@ class ValveConnection:
         if not self._can_start_persistent_session():
             return False
 
-        _LOGGER.debug(
-            "Maintaining persistent connection to valve %s", self._address
-        )
+        _LOGGER.debug("Maintaining persistent connection to valve %s", self._address)
         self._persistent_task = self._hass.loop.create_task(
             self._async_persistent_keepalive_loop(client)
         )
         return True
 
-    async def _async_persistent_keepalive_loop(
-        self, client: BaseBleakClient
-    ) -> None:
+    async def _async_persistent_keepalive_loop(self, client: BaseBleakClient) -> None:
         """Keep the BLE connection alive and poll on a frequent schedule."""
 
         try:
@@ -564,9 +557,10 @@ class ValveConnection:
                     break
 
                 try:
-                    request_sent, response_received = (
-                        await self._async_request_dashboard(client)
-                    )
+                    (
+                        request_sent,
+                        response_received,
+                    ) = await self._async_request_dashboard(client)
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # pragma: no cover - unexpected protocol errors
@@ -605,10 +599,7 @@ class ValveConnection:
 
             self._persistent_task = None
 
-            if (
-                self._persistent_connection_enabled
-                and not self._unloaded
-            ):
+            if self._persistent_connection_enabled and not self._unloaded:
                 self._set_connection_cooldown()
                 self.schedule_poll()
 
@@ -670,7 +661,8 @@ class ValveConnection:
             advertisement = self._advertisement
             if advertisement is None:
                 _LOGGER.debug(
-                    "Skipping poll for %s; no advertisement data is available", self._address
+                    "Skipping poll for %s; no advertisement data is available",
+                    self._address,
                 )
                 return
 
@@ -734,9 +726,7 @@ class ValveConnection:
             if connection_attempted:
                 self._set_connection_cooldown()
 
-    async def _async_fetch_device_information(
-        self, client: BaseBleakClient
-    ) -> None:
+    async def _async_fetch_device_information(self, client: BaseBleakClient) -> None:
         """Retrieve extended diagnostic information from the valve."""
 
         advertisement = self._advertisement
@@ -827,9 +817,10 @@ class ValveConnection:
             )
             return
 
-        dashboard_request_sent, dashboard_response_received = (
-            await self._async_request_dashboard(client)
-        )
+        (
+            dashboard_request_sent,
+            dashboard_response_received,
+        ) = await self._async_request_dashboard(client)
         if not dashboard_request_sent:
             _LOGGER.debug(
                 "Unable to send Dashboard request to valve %s; will retry on next poll",
@@ -1152,9 +1143,7 @@ class ValveConnection:
                 return True, False
 
             try:
-                async with asyncio.timeout(
-                    _DEVICE_LIST_RESPONSE_TIMEOUT_SECONDS
-                ):
+                async with asyncio.timeout(_DEVICE_LIST_RESPONSE_TIMEOUT_SECONDS):
                     assert response_future is not None
                     packet = await response_future
             except asyncio.TimeoutError:
@@ -1229,7 +1218,10 @@ class ValveConnection:
                             if next_counter is not None:
                                 connection_counter = next_counter
 
-                    if not authenticated and sent_attempts >= _MAX_AUTHENTICATION_ATTEMPTS:
+                    if (
+                        not authenticated
+                        and sent_attempts >= _MAX_AUTHENTICATION_ATTEMPTS
+                    ):
                         self._record_authentication_failure(passcode)
 
             return True, response_received
@@ -1304,7 +1296,10 @@ class ValveConnection:
             )
             return False
 
-        if self._device_list_authentication_state == ValveAuthenticationState.AUTHENTICATED:
+        if (
+            self._device_list_authentication_state
+            == ValveAuthenticationState.AUTHENTICATED
+        ):
             return False
 
         if passcode_value is None:
@@ -1407,7 +1402,9 @@ class ValveConnection:
 
         counter = connection_counter & 0xFF
         polynomial = _CRC_RANDOM.choice(_CRC_ALLOWED_POLYNOMIALS)
-        buffer = bytearray(self._create_request_payload(ValveRequestCommand.DEVICE_LIST))
+        buffer = bytearray(
+            self._create_request_payload(ValveRequestCommand.DEVICE_LIST)
+        )
         digits = self._get_password_digits(passcode)
         random_seed = _CRC_RANDOM.randint(1, 255)
         self._crc8.set_options(polynomial, random_seed)
@@ -1511,9 +1508,7 @@ class ValveConnection:
                 return True, False
 
             try:
-                async with asyncio.timeout(
-                    _DASHBOARD_RESPONSE_TIMEOUT_SECONDS
-                ):
+                async with asyncio.timeout(_DASHBOARD_RESPONSE_TIMEOUT_SECONDS):
                     packets_list = await response_future
             except asyncio.TimeoutError:
                 if not response_future.done():
@@ -1680,7 +1675,10 @@ class ValveConnection:
 
             if target_service_uuid is not None:
                 service_uuid_value = getattr(service, "uuid", None)
-                if not isinstance(service_uuid_value, str) or service_uuid_value.lower() != target_service_uuid:
+                if (
+                    not isinstance(service_uuid_value, str)
+                    or service_uuid_value.lower() != target_service_uuid
+                ):
                     continue
 
             properties = set(getattr(characteristic, "properties", ()) or ())
@@ -1846,6 +1844,8 @@ class ValveConnection:
             prefill_soak_mode = bool(second[10] & 0x08)
             soak_timer = second[11]
             is_in_aeration = not bool(second[12] & 0x01)
+            tank_salt_remaining = self._decode_salt(second, 14)
+            tank_salt_capacity = self._decode_salt(second, 17)
             tank_in_service = second[18]
 
             graph_values = (
@@ -1882,6 +1882,8 @@ class ValveConnection:
                 soak_timer=soak_timer,
                 is_in_aeration=is_in_aeration,
                 tank_in_service=tank_in_service,
+                tank_salt_remaining=tank_salt_remaining,
+                tank_salt_capacity=tank_salt_capacity,
                 graph_usage_ten_gallons=tuple(graph_values),
             )
         except Exception:  # pragma: no cover - parsing errors should be rare
@@ -1893,9 +1895,7 @@ class ValveConnection:
         self._dashboard_data = dashboard
         self._notify_dashboard_listeners(dashboard)
 
-    def _notify_dashboard_listeners(
-        self, dashboard: ValveDashboardData | None
-    ) -> None:
+    def _notify_dashboard_listeners(self, dashboard: ValveDashboardData | None) -> None:
         """Notify registered callbacks about a Dashboard data update."""
 
         for listener in list(self._dashboard_listeners):
@@ -1930,6 +1930,12 @@ class ValveConnection:
         """Return the flow value encoded in hundredths of a unit."""
 
         return ValveConnection._read_uint16_be(packet, index) / 100
+
+    @staticmethod
+    def _decode_salt(packet: bytes, index: int) -> int:
+        """Return the salt level/capacity in lbs."""
+
+        return round(ValveConnection._read_uint16_be(packet, index) / 10)
 
     @staticmethod
     def _calculate_battery_capacity(raw_value: int) -> int:
@@ -2274,9 +2280,7 @@ class ValveConnectionManager:
 
         return self._connections.get(address)
 
-    def get_passcode(
-        self, address: str | None = None
-    ) -> ValvePasscodeConfiguration:
+    def get_passcode(self, address: str | None = None) -> ValvePasscodeConfiguration:
         """Return the configured passcode details for a valve address."""
 
         overrides = self._config_entry.options.get(CONF_DEVICE_PASSCODES, {})

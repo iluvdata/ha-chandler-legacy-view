@@ -88,5 +88,6 @@ class ValveDashboardData:
     soak_timer: int
     is_in_aeration: bool
     tank_in_service: int
+    tank_salt_remaining: int
+    tank_salt_capacity: int
     graph_usage_ten_gallons: tuple[int, ...]
-

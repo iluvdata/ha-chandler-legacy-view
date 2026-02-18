@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-import datetime
+from datetime import datetime, timedelta
 
 from collections.abc import Callable
 
@@ -18,6 +18,7 @@ from homeassistant.components.sensor.const import ATTR_LAST_RESET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    UnitOfMass,
     UnitOfTime,
     UnitOfVolume,
     UnitOfVolumeFlowRate,
@@ -178,6 +179,25 @@ class ValveWaterHardnessSensor(ValveDashboardSensor):
         return dashboard.water_hardness
 
 
+def _get_valve_time(hour_value: int, minute: int, is_pm: bool) -> datetime | None:
+
+    if hour_value < 0 or minute < 0 or minute >= 60:
+        return None
+
+    hour = hour_value % 24
+    if is_pm:
+        if hour < 12:
+            hour = (hour % 12) + 12
+    elif hour == 12:
+        hour = 0
+
+    try:
+        now = dt_util.now()
+        return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except ValueError:
+        return None
+
+
 class ValveTimeOfDaySensor(ValveDashboardSensor):
     """Represent the current valve time reported by the dashboard."""
 
@@ -198,23 +218,9 @@ class ValveTimeOfDaySensor(ValveDashboardSensor):
     ) -> object | None:
         if dashboard is None:
             return None
-        hour_value = dashboard.time_hour
-        minute = dashboard.time_minute
-        if hour_value < 0 or minute < 0 or minute >= 60:
-            return None
-
-        hour = hour_value % 24
-        if dashboard.is_pm:
-            if hour < 12:
-                hour = (hour % 12) + 12
-        elif hour == 12:
-            hour = 0
-
-        try:
-            now = dt_util.now()
-            return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        except ValueError:
-            return None
+        return _get_valve_time(
+            dashboard.time_hour, dashboard.time_minute, dashboard.is_pm
+        )
 
 
 class ValveBatteryCapacitySensor(ValveDashboardSensor):
@@ -244,8 +250,9 @@ class ValveSoftWaterRemainingSensor(ValveDashboardSensor):
     """Represent the soft water remaining until regeneration for metered valves."""
 
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_device_class = SensorDeviceClass.WATER
+    _attr_suggested_display_precision = 0
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -295,8 +302,10 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
     """Represent the total water usage recorded for the current day."""
 
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_device_class = SensorDeviceClass.WATER
+    _attr_extra_state_attributes = {ATTR_LAST_RESET: None}
+    _attr_suggested_display_precision = 0
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -312,19 +321,22 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
         if dashboard is None:
             return None
 
-        value: int = dashboard.water_usage
-
-        if self._attr_extra_state_attributes is None:
-            self._attr_extra_state_attributes = {}
-        if (
-            ATTR_LAST_RESET not in self._attr_extra_state_attributes
-            or value == 0
-            or value < self._attr_native_value
+        # Uses regen time for reset time
+        if valve_time := _get_valve_time(
+            dashboard.time_hour, dashboard.time_minute, dashboard.is_pm
         ):
-            self._attr_extra_state_attributes[ATTR_LAST_RESET] = datetime.datetime.now(
-                datetime.UTC
-            )
-        return value
+            if regen_time := _get_valve_time(
+                dashboard.regeneration_time_hour, 0, dashboard.regeneration_time_is_pm
+            ):
+                if valve_time.time() >= regen_time.time():
+                    self._attr_extra_state_attributes[ATTR_LAST_RESET] = regen_time
+                else:
+                    # last regen was yesterday
+                    self._attr_extra_state_attributes[ATTR_LAST_RESET] = (
+                        regen_time - timedelta(days=1)
+                    )
+
+        return dashboard.water_usage
 
 
 class ValvePeakFlowTodaySensor(ValveDashboardSensor):
@@ -352,6 +364,54 @@ class ValvePeakFlowTodaySensor(ValveDashboardSensor):
         return dashboard.peak_flow
 
 
+class TankSaltSensor(ValveDashboardSensor):
+    """Represent the peak flow recorded for the current day."""
+
+    _attr_native_unit_of_measurement = UnitOfMass.POUNDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.WEIGHT
+    _attr_suggested_display_precision = 0
+
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="salt_remaining",
+            name_suffix="Remaining Salt",
+        )
+
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
+        if dashboard is None:
+            return None
+        return dashboard.tank_salt_remaining
+
+
+class TankSaltCapacitySensor(ValveDashboardSensor):
+    """Represent the peak flow recorded for the current day."""
+
+    _attr_native_unit_of_measurement = UnitOfMass.POUNDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.WEIGHT
+    _attr_suggested_display_precision = 0
+
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="salt_capacity",
+            name_suffix="Tank Salt Capacity",
+        )
+
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
+        if dashboard is None:
+            return None
+        return dashboard.tank_salt_capacity
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -371,6 +431,8 @@ async def async_setup_entry(
     days_entities: dict[str, ValveDaysUntilRegenerationSensor] = {}
     usage_entities: dict[str, ValveWaterUsageTodaySensor] = {}
     peak_entities: dict[str, ValvePeakFlowTodaySensor] = {}
+    salt_remaining_entities: dict[str, TankSaltSensor] = {}
+    salt_capacity_entities: dict[str, TankSaltCapacitySensor] = {}
 
     def _ensure_dashboard_entity(
         advertisement: ValveAdvertisement,
@@ -486,6 +548,26 @@ async def async_setup_entry(
             debug_description="peak flow today",
         )
 
+    def _ensure_salt_capacity_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveDashboardSensor | None, list[ValveDashboardSensor]]:
+        return _ensure_dashboard_entity(
+            advertisement,
+            salt_capacity_entities,
+            factory=lambda adv, conn: TankSaltCapacitySensor(adv, conn),
+            debug_description="tank salt capacity",
+        )
+
+    def _ensure_salt_remaining_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveDashboardSensor | None, list[ValveDashboardSensor]]:
+        return _ensure_dashboard_entity(
+            advertisement,
+            salt_remaining_entities,
+            factory=lambda adv, conn: TankSaltSensor(adv, conn),
+            debug_description="tank salt remaining",
+        )
+
     EnsureCallback = Callable[
         [ValveAdvertisement],
         tuple[ValveDashboardSensor | None, list[ValveDashboardSensor]],
@@ -500,6 +582,8 @@ async def async_setup_entry(
         _ensure_days_entity,
         _ensure_usage_entity,
         _ensure_peak_entity,
+        _ensure_salt_capacity_entity,
+        _ensure_salt_remaining_entity,
     )
 
     initial_entities: list[SensorEntity] = []
@@ -520,6 +604,8 @@ async def async_setup_entry(
         days_entities,
         usage_entities,
         peak_entities,
+        salt_capacity_entities,
+        salt_remaining_entities,
     )
 
     @callback
