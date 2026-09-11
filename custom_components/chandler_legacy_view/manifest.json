@@ -1,4 +1,6 @@
 {
+  "domain": "chandler_legacy_view",
+  "name": "Chandler Legacy View",
   "codeowners": [
     "@zareh687",
     "@iluvdata"
@@ -8,11 +10,9 @@
     "bluetooth"
   ],
   "documentation": "https://github.com/zareh687/ha-chandler-legacy-view",
-  "domain": "chandler_legacy_view",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/zareh687/ha-chandler-legacy-view/issues",
-  "name": "Chandler Legacy View",
   "requirements": [],
   "version": "0.1.18"
 }

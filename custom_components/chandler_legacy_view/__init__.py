@@ -29,6 +29,7 @@ from .discovery import ValveDiscoveryManager
 
 _LOGGER = logging.getLogger(__name__)
 
+CONFIG_SCHEMA = {}
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Chandler Legacy View integration via YAML."""
