@@ -1,15 +1,13 @@
 """Active Bluetooth connection management for Chandler valves."""
 
-from __future__ import annotations
-
 import asyncio
-import contextlib
-import inspect
-import logging
 from collections.abc import Callable, Iterable, Mapping
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum, IntEnum
+import inspect
+import logging
 from random import SystemRandom
 
 from bleak.backends.client import BaseBleakClient
@@ -18,6 +16,7 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
 )
+
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothChange
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +25,7 @@ from homeassistant.core import CALLBACK_TYPE, CoreState, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .brine_tank import create_brine_tank_settings_payload
 from .clock import create_set_time_payload
 from .const import (
     CONF_CLOCK_SYNC_INTERVAL_HOURS,
@@ -57,6 +57,8 @@ from .maintenance import (
     watchdog_timeout_duration,
 )
 from .models import (
+    BrineTank,
+    BrineTankSize,
     ValveAdvancedSettingsData,
     ValveAdvertisement,
     ValveDashboardData,
@@ -133,9 +135,7 @@ _MAX_AUTHENTICATION_ATTEMPTS = 4
 
 _CRC_RANDOM = SystemRandom()
 _CRC_ALLOWED_POLYNOMIALS: tuple[int, ...] = tuple(
-    polynomial
-    for polynomial in range(1, 256)
-    if 4 <= int.bit_count(polynomial) <= 5
+    polynomial for polynomial in range(1, 256) if 4 <= int.bit_count(polynomial) <= 5
 )
 
 
@@ -275,7 +275,9 @@ class ValveConnection:
         self._authentication_failed = False
         self._authentication_failed_passcode: str | None = None
         self._dashboard_data: ValveDashboardData | None = None
-        self._dashboard_listeners: list[Callable[[ValveDashboardData | None], None]] = []
+        self._dashboard_listeners: list[
+            Callable[[ValveDashboardData | None], None]
+        ] = []
         self._advanced_settings_data: ValveAdvancedSettingsData | None = None
         self._advanced_settings_defaults: ValveAdvancedSettingsData | None = None
         self._advanced_settings_listeners: list[
@@ -428,12 +430,13 @@ class ValveConnection:
     def clear_authentication_lockout(self) -> None:
         """Allow the next connection attempt to retry authentication."""
 
-        if not self._authentication_failed and self._authentication_failed_passcode is None:
+        if (
+            not self._authentication_failed
+            and self._authentication_failed_passcode is None
+        ):
             return
 
-        _LOGGER.debug(
-            "Valve %s authentication lockout manually cleared", self._address
-        )
+        _LOGGER.debug("Valve %s authentication lockout manually cleared", self._address)
         self._set_authentication_failed(False)
 
     async def async_set_persistent_connection_enabled(self, enabled: bool) -> None:
@@ -442,9 +445,7 @@ class ValveConnection:
         if enabled:
             if self._persistent_connection_enabled:
                 return
-            _LOGGER.debug(
-                "Persistent connection requested for valve %s", self._address
-            )
+            _LOGGER.debug("Persistent connection requested for valve %s", self._address)
             self._persistent_connection_enabled = True
             self._cancel_cooldown()
             self._next_connection_time = None
@@ -454,9 +455,7 @@ class ValveConnection:
         if not self._persistent_connection_enabled:
             return
 
-        _LOGGER.debug(
-            "Persistent connection disabled for valve %s", self._address
-        )
+        _LOGGER.debug("Persistent connection disabled for valve %s", self._address)
         self._persistent_connection_enabled = False
         await self._async_stop_persistent_session()
 
@@ -782,8 +781,7 @@ class ValveConnection:
             return
 
         _LOGGER.info(
-            "Valve %s clock differs from Home Assistant by %s minutes; "
-            "synchronizing",
+            "Valve %s clock differs from Home Assistant by %s minutes; synchronizing",
             self._address,
             drift,
         )
@@ -914,17 +912,13 @@ class ValveConnection:
         if not self._can_start_persistent_session():
             return False
 
-        _LOGGER.debug(
-            "Maintaining persistent connection to valve %s", self._address
-        )
+        _LOGGER.debug("Maintaining persistent connection to valve %s", self._address)
         self._persistent_task = self._hass.loop.create_task(
             self._async_persistent_keepalive_loop(client)
         )
         return True
 
-    async def _async_persistent_keepalive_loop(
-        self, client: BaseBleakClient
-    ) -> None:
+    async def _async_persistent_keepalive_loop(self, client: BaseBleakClient) -> None:
         """Keep the BLE connection alive and poll on a frequent schedule."""
 
         try:
@@ -958,9 +952,10 @@ class ValveConnection:
                     break
 
                 try:
-                    request_sent, response_received = (
-                        await self._async_request_dashboard(client)
-                    )
+                    (
+                        request_sent,
+                        response_received,
+                    ) = await self._async_request_dashboard(client)
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # pragma: no cover - unexpected protocol errors
@@ -997,10 +992,7 @@ class ValveConnection:
 
             self._persistent_task = None
 
-            if (
-                self._persistent_connection_enabled
-                and not self._unloaded
-            ):
+            if self._persistent_connection_enabled and not self._unloaded:
                 self._set_connection_cooldown()
                 self.schedule_poll()
 
@@ -1093,11 +1085,21 @@ class ValveConnection:
         if not self.available:
             return False
         if self._history_cooldown_active():
-            _LOGGER.debug("Skipping Advanced Settings poll for %s; history cooldown active", self._address)
+            _LOGGER.debug(
+                "Skipping Advanced Settings poll for %s; history cooldown active",
+                self._address,
+            )
             return False
         # Don't collide with an active dashboard poll / persistent session
-        if self._lock.locked() or self._history_lock.locked() or self._persistent_task_active():
-            _LOGGER.debug("Skipping Advanced Settings poll for %s; another poll is active", self._address)
+        if (
+            self._lock.locked()
+            or self._history_lock.locked()
+            or self._persistent_task_active()
+        ):
+            _LOGGER.debug(
+                "Skipping Advanced Settings poll for %s; another poll is active",
+                self._address,
+            )
             return False
         async with self._history_lock:
             async with self._lock:
@@ -1109,10 +1111,18 @@ class ValveConnection:
         if not self.available:
             return False
         if self._history_cooldown_active():
-            _LOGGER.debug("Skipping History poll for %s; cooldown active", self._address)
+            _LOGGER.debug(
+                "Skipping History poll for %s; cooldown active", self._address
+            )
             return False
-        if self._lock.locked() or self._history_lock.locked() or self._persistent_task_active():
-            _LOGGER.debug("Skipping History poll for %s; another poll is active", self._address)
+        if (
+            self._lock.locked()
+            or self._history_lock.locked()
+            or self._persistent_task_active()
+        ):
+            _LOGGER.debug(
+                "Skipping History poll for %s; another poll is active", self._address
+            )
             return False
         async with self._history_lock:
             async with self._lock:
@@ -1134,9 +1144,15 @@ class ValveConnection:
                     self._next_connection_time = None
                     ok = await self._async_poll_advanced_settings_locked()
                     if not ok:
-                        raise ValveCommandError("Advanced Settings did not provide fresh data")
+                        raise ValveCommandError(
+                            "Advanced Settings did not provide fresh data"
+                        )
         finally:
-            if restart_persistent and not self._unloaded and not self._persistent_task_active():
+            if (
+                restart_persistent
+                and not self._unloaded
+                and not self._persistent_task_active()
+            ):
                 self._next_connection_time = None
                 self.schedule_poll()
 
@@ -1158,7 +1174,11 @@ class ValveConnection:
                     if not ok:
                         raise ValveCommandError("History did not provide fresh data")
         finally:
-            if restart_persistent and not self._unloaded and not self._persistent_task_active():
+            if (
+                restart_persistent
+                and not self._unloaded
+                and not self._persistent_task_active()
+            ):
                 self._next_connection_time = None
                 self.schedule_poll()
 
@@ -1169,24 +1189,42 @@ class ValveConnection:
         if advertisement is None:
             return False
         if advertisement.model not in (None, "Evb019"):
-            _LOGGER.debug("Skipping Advanced Settings for %s; model %s not supported", self._address, advertisement.model)
+            _LOGGER.debug(
+                "Skipping Advanced Settings for %s; model %s not supported",
+                self._address,
+                advertisement.model,
+            )
             return False
-        ble_device = bluetooth.async_ble_device_from_address(self._hass, self._address, connectable=True)
+        ble_device = bluetooth.async_ble_device_from_address(
+            self._hass, self._address, connectable=True
+        )
         if ble_device is None:
             return False
         client: BaseBleakClient | None = None
         try:
             try:
                 async with asyncio.timeout(CONNECTION_TIMEOUT_SECONDS):
-                    client = await establish_connection(BleakClientWithServiceCache, ble_device, self._address)
+                    client = await establish_connection(
+                        BleakClientWithServiceCache, ble_device, self._address
+                    )
             except asyncio.TimeoutError:
-                _LOGGER.warning("Timed out connecting to valve %s for Advanced Settings", self._address)
+                _LOGGER.warning(
+                    "Timed out connecting to valve %s for Advanced Settings",
+                    self._address,
+                )
                 return False
             except BLEAK_RETRY_EXCEPTIONS as exc:
-                _LOGGER.debug("Unable to connect to valve %s for Advanced Settings: %s", self._address, exc)
+                _LOGGER.debug(
+                    "Unable to connect to valve %s for Advanced Settings: %s",
+                    self._address,
+                    exc,
+                )
                 return False
             except Exception:
-                _LOGGER.exception("Unexpected error connecting to valve %s for Advanced Settings", self._address)
+                _LOGGER.exception(
+                    "Unexpected error connecting to valve %s for Advanced Settings",
+                    self._address,
+                )
                 return False
             # Authenticate first via DeviceList
             if not await self._async_fetch_device_information_for_history(client):
@@ -1194,7 +1232,10 @@ class ValveConnection:
             sent, received = await self._async_request_advanced_settings(client)
             if received:
                 self._history_last_success = dt_util.utcnow()
-                _LOGGER.debug("Retrieved Advanced Settings from valve %s (separate poll)", self._address)
+                _LOGGER.debug(
+                    "Retrieved Advanced Settings from valve %s (separate poll)",
+                    self._address,
+                )
             return received
         finally:
             if client is not None:
@@ -1209,31 +1250,48 @@ class ValveConnection:
         if advertisement is None:
             return False
         if advertisement.model not in (None, "Evb019"):
-            _LOGGER.debug("Skipping History for %s; model %s not supported", self._address, advertisement.model)
+            _LOGGER.debug(
+                "Skipping History for %s; model %s not supported",
+                self._address,
+                advertisement.model,
+            )
             return False
-        ble_device = bluetooth.async_ble_device_from_address(self._hass, self._address, connectable=True)
+        ble_device = bluetooth.async_ble_device_from_address(
+            self._hass, self._address, connectable=True
+        )
         if ble_device is None:
             return False
         client: BaseBleakClient | None = None
         try:
             try:
                 async with asyncio.timeout(CONNECTION_TIMEOUT_SECONDS):
-                    client = await establish_connection(BleakClientWithServiceCache, ble_device, self._address)
+                    client = await establish_connection(
+                        BleakClientWithServiceCache, ble_device, self._address
+                    )
             except asyncio.TimeoutError:
-                _LOGGER.warning("Timed out connecting to valve %s for History", self._address)
+                _LOGGER.warning(
+                    "Timed out connecting to valve %s for History", self._address
+                )
                 return False
             except BLEAK_RETRY_EXCEPTIONS as exc:
-                _LOGGER.debug("Unable to connect to valve %s for History: %s", self._address, exc)
+                _LOGGER.debug(
+                    "Unable to connect to valve %s for History: %s", self._address, exc
+                )
                 return False
             except Exception:
-                _LOGGER.exception("Unexpected error connecting to valve %s for History", self._address)
+                _LOGGER.exception(
+                    "Unexpected error connecting to valve %s for History", self._address
+                )
                 return False
             if not await self._async_fetch_device_information_for_history(client):
                 return False
             sent, received = await self._async_request_status_and_history(client)
             if received:
                 self._history_last_success = dt_util.utcnow()
-                _LOGGER.debug("Retrieved Status and History from valve %s (separate poll)", self._address)
+                _LOGGER.debug(
+                    "Retrieved Status and History from valve %s (separate poll)",
+                    self._address,
+                )
             return received
         finally:
             if client is not None:
@@ -1241,7 +1299,9 @@ class ValveConnection:
             self._set_history_cooldown()
             self._set_connection_cooldown()
 
-    async def _async_fetch_device_information_for_history(self, client: BaseBleakClient) -> bool:
+    async def _async_fetch_device_information_for_history(
+        self, client: BaseBleakClient
+    ) -> bool:
         """Authenticate (DeviceList) without requesting Dashboard — for separate history/advanced polls."""
 
         advertisement = self._advertisement
@@ -1253,8 +1313,13 @@ class ValveConnection:
         request_sent, response_received = await self._async_request_device_list(client)
         if not request_sent or not response_received:
             return False
-        authenticated = self._device_list_authentication_state == ValveAuthenticationState.AUTHENTICATED
-        authentication_required = self._device_list_password_state == ValvePasswordDecodeState.AUTH_NEEDED
+        authenticated = (
+            self._device_list_authentication_state
+            == ValveAuthenticationState.AUTHENTICATED
+        )
+        authentication_required = (
+            self._device_list_password_state == ValvePasswordDecodeState.AUTH_NEEDED
+        )
         if authentication_required and not authenticated:
             passcode = self.get_configured_passcode()
             if passcode is not None:
@@ -1262,7 +1327,10 @@ class ValveConnection:
             self._reset_authentication_failure_if_needed(passcode)
             if passcode is None or self._parse_passcode(passcode) is None:
                 return False
-            if self._authentication_failed and passcode == self._authentication_failed_passcode:
+            if (
+                self._authentication_failed
+                and passcode == self._authentication_failed_passcode
+            ):
                 return False
             if self._device_list_password_state == ValvePasswordDecodeState.AUTH_NEEDED:
                 return False
@@ -1390,9 +1458,109 @@ class ValveConnection:
                 await self._async_disconnect_client(client)
             self._set_connection_cooldown()
 
-    async def _async_regenerate_locked(
-        self, *, advance_current_cycle: bool
-    ) -> None:
+    async def async_update_tank_settings(self, tank: BrineTank) -> None:
+        """Update the tank settings."""
+
+        if not self.available:
+            raise ValveCommandError("The valve is not currently available")
+
+        restart_persistent_session = self._persistent_connection_enabled
+        try:
+            async with self._lock:
+                if self._persistent_task_active():
+                    await self._async_stop_persistent_session()
+                await self._async_update_tank_settings_locked(tank)
+        finally:
+            if restart_persistent_session and not self._unloaded:
+                self._next_connection_time = None
+                self.schedule_poll()
+
+    async def _async_update_tank_settings_locked(self, tank: BrineTank) -> None:
+        """Send Set Time while the connection lock is held."""
+
+        if self._advertisement is None:
+            raise ValveCommandError("No Bluetooth advertisement is available")
+        if self._advertisement.model not in (None, "Evb019"):
+            raise ValveCommandError(
+                f"Updating brine tank not supported for {self._advertisement.model}"
+            )
+        if self.dashboard_data is None or self.dashboard_data.brine_tank is None:
+            raise ValveCommandError("This valve does not support brine tank settings")
+
+        ble_device = bluetooth.async_ble_device_from_address(
+            self._hass, self._address, connectable=True
+        )
+        if ble_device is None:
+            raise ValveCommandError("The valve is not currently connectable")
+
+        client: BaseBleakClient | None = None
+        try:
+            try:
+                async with asyncio.timeout(CONNECTION_TIMEOUT_SECONDS):
+                    client = await establish_connection(
+                        BleakClientWithServiceCache,
+                        ble_device,
+                        self._address,
+                    )
+            except TimeoutError as exc:
+                raise ValveCommandError(
+                    "Timed out while connecting to the valve"
+                ) from exc
+            except BLEAK_RETRY_EXCEPTIONS as exc:
+                raise ValveCommandError(
+                    f"Unable to connect to the valve: {exc}"
+                ) from exc
+            except Exception as exc:  # pragma: no cover - platform-specific BLE errors
+                raise ValveCommandError(
+                    f"Unexpected error while connecting to the valve: {exc}"
+                ) from exc
+
+            if not await self._async_fetch_device_information(client):
+                raise ValveCommandError(
+                    "Could not authenticate and refresh the valve state"
+                )
+
+            if not await self._async_send_payload(
+                client,
+                create_brine_tank_settings_payload(tank),
+                command_name="Brine Tank Settings",
+            ):
+                raise ValveCommandError("Failed to update brine tank settings")
+
+            self._dashboard_data.brine_tank = tank
+            for listener in list(self._dashboard_listeners):
+                try:
+                    listener(self._dashboard_data)
+                except Exception:  # pragma: no cover - listener failures are logged
+                    _LOGGER.exception(
+                        "Unexpected error in dashboard listener for valve %s",
+                        self._address,
+                    )
+            _LOGGER.info(
+                "Updated brine tank settings %s with %s",
+                self._address,
+                tank,
+            )
+
+            # Confirm the command by refreshing the dashboard. The write has
+            # already succeeded, so a refresh failure is only logged.
+            try:
+                await asyncio.sleep(0.25)
+                await self._async_request_dashboard(client)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - best-effort refresh
+                _LOGGER.debug(
+                    "Unable to refresh valve %s after brine tank settings: %s",
+                    self._address,
+                    exc,
+                )
+        finally:
+            if client is not None:
+                await self._async_disconnect_client(client)
+            self._set_connection_cooldown()
+
+    async def _async_regenerate_locked(self, *, advance_current_cycle: bool) -> None:
         """Send a regeneration command while the connection lock is held."""
 
         advertisement = self._advertisement
@@ -1452,9 +1620,7 @@ class ValveConnection:
                 )
 
             command_name = (
-                "Next Regeneration Step"
-                if advance_current_cycle
-                else "Regenerate Now"
+                "Next Regeneration Step" if advance_current_cycle else "Regenerate Now"
             )
             if not await self._async_send_payload(
                 client,
@@ -1507,7 +1673,8 @@ class ValveConnection:
             advertisement = self._advertisement
             if advertisement is None:
                 _LOGGER.debug(
-                    "Skipping poll for %s; no advertisement data is available", self._address
+                    "Skipping poll for %s; no advertisement data is available",
+                    self._address,
                 )
                 return False
 
@@ -1576,9 +1743,7 @@ class ValveConnection:
 
         return dashboard_response_received
 
-    async def _async_fetch_device_information(
-        self, client: BaseBleakClient
-    ) -> bool:
+    async def _async_fetch_device_information(self, client: BaseBleakClient) -> bool:
         """Retrieve data and report whether Dashboard returned a response."""
 
         advertisement = self._advertisement
@@ -1672,9 +1837,10 @@ class ValveConnection:
             )
             return False
 
-        dashboard_request_sent, dashboard_response_received = (
-            await self._async_request_dashboard(client)
-        )
+        (
+            dashboard_request_sent,
+            dashboard_response_received,
+        ) = await self._async_request_dashboard(client)
         if not dashboard_request_sent:
             _LOGGER.debug(
                 "Unable to send Dashboard request to valve %s; will retry on next poll",
@@ -1870,11 +2036,14 @@ class ValveConnection:
                 exc,
             )
             return False
-        except Exception:  # pragma: no cover - unexpected Bluetooth errors are logged
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - unexpected Bluetooth errors are logged
             _LOGGER.exception(
-                "Unexpected error while sending %s to valve %s",
+                "Unexpected error while sending %s to valve %s with %s",
                 command_name,
                 self._address,
+                exc,
             )
             return False
 
@@ -2006,9 +2175,7 @@ class ValveConnection:
                 return True, False
 
             try:
-                async with asyncio.timeout(
-                    _DEVICE_LIST_RESPONSE_TIMEOUT_SECONDS
-                ):
+                async with asyncio.timeout(_DEVICE_LIST_RESPONSE_TIMEOUT_SECONDS):
                     assert response_future is not None
                     packet = await response_future
             except asyncio.TimeoutError:
@@ -2082,7 +2249,10 @@ class ValveConnection:
                             if next_counter is not None:
                                 connection_counter = next_counter
 
-                    if not authenticated and sent_attempts >= _MAX_AUTHENTICATION_ATTEMPTS:
+                    if (
+                        not authenticated
+                        and sent_attempts >= _MAX_AUTHENTICATION_ATTEMPTS
+                    ):
                         self._record_authentication_failure(passcode)
 
             return True, response_received
@@ -2157,7 +2327,10 @@ class ValveConnection:
             )
             return False
 
-        if self._device_list_authentication_state == ValveAuthenticationState.AUTHENTICATED:
+        if (
+            self._device_list_authentication_state
+            == ValveAuthenticationState.AUTHENTICATED
+        ):
             return False
 
         if passcode_value is None:
@@ -2260,7 +2433,9 @@ class ValveConnection:
 
         counter = connection_counter & 0xFF
         polynomial = _CRC_RANDOM.choice(_CRC_ALLOWED_POLYNOMIALS)
-        buffer = bytearray(self._create_request_payload(ValveRequestCommand.DEVICE_LIST))
+        buffer = bytearray(
+            self._create_request_payload(ValveRequestCommand.DEVICE_LIST)
+        )
         digits = self._get_password_digits(passcode)
         random_seed = _CRC_RANDOM.randint(1, 255)
         self._crc8.set_options(polynomial, random_seed)
@@ -2364,9 +2539,7 @@ class ValveConnection:
                 return True, False
 
             try:
-                async with asyncio.timeout(
-                    _DASHBOARD_RESPONSE_TIMEOUT_SECONDS
-                ):
+                async with asyncio.timeout(_DASHBOARD_RESPONSE_TIMEOUT_SECONDS):
                     packets_list = await response_future
             except asyncio.TimeoutError:
                 if not response_future.done():
@@ -2419,7 +2592,9 @@ class ValveConnection:
             packets[index] = packet
             if len(packets) == _ADVANCED_SETTINGS_PACKET_COUNT:
                 try:
-                    ordered = [packets[i] for i in range(_ADVANCED_SETTINGS_PACKET_COUNT)]
+                    ordered = [
+                        packets[i] for i in range(_ADVANCED_SETTINGS_PACKET_COUNT)
+                    ]
                 except KeyError:
                     return
                 response_future.set_result(ordered)
@@ -2447,9 +2622,7 @@ class ValveConnection:
                 return True, False
 
             try:
-                async with asyncio.timeout(
-                    _ADVANCED_SETTINGS_RESPONSE_TIMEOUT_SECONDS
-                ):
+                async with asyncio.timeout(_ADVANCED_SETTINGS_RESPONSE_TIMEOUT_SECONDS):
                     packets_list = await response_future
             except asyncio.TimeoutError:
                 if not response_future.done():
@@ -2496,11 +2669,18 @@ class ValveConnection:
                 return
             packet = bytes(data)
             if not _is_history_packet(packet):
-                _LOGGER.debug("Valve %s History packet ignored %s", self._address, packet.hex())
+                _LOGGER.debug(
+                    "Valve %s History packet ignored %s", self._address, packet.hex()
+                )
                 return
             # Store
             packets.append(packet)
-            _LOGGER.debug("Valve %s History packet %d %s", self._address, len(packets), packet.hex())
+            _LOGGER.debug(
+                "Valve %s History packet %d %s",
+                self._address,
+                len(packets),
+                packet.hex(),
+            )
             # Early complete check: last packet tail 58 and we have enough packets
             # Graphs complete when day tail 56, regen tail 57, peak tail 58
             if len(packets) >= _HISTORY_MAX_PACKETS:
@@ -2527,10 +2707,14 @@ class ValveConnection:
                 if trial_complete and not response_future.done():
                     response_future.set_result(list(packets))
 
-        subscriptions = await self._async_subscribe_to_notifications(client, _notification_handler)
+        subscriptions = await self._async_subscribe_to_notifications(
+            client, _notification_handler
+        )
 
         try:
-            request_sent = await self._async_send_request(client, ValveRequestCommand.STATUS_AND_HISTORY)
+            request_sent = await self._async_send_request(
+                client, ValveRequestCommand.STATUS_AND_HISTORY
+            )
             if not request_sent:
                 if not response_future.done():
                     response_future.cancel()
@@ -2538,7 +2722,10 @@ class ValveConnection:
             if not subscriptions:
                 if not response_future.done():
                     response_future.cancel()
-                _LOGGER.debug("Valve %s does not expose notifying characteristic for History", self._address)
+                _LOGGER.debug(
+                    "Valve %s does not expose notifying characteristic for History",
+                    self._address,
+                )
                 return True, False
             try:
                 async with asyncio.timeout(_HISTORY_RESPONSE_TIMEOUT_SECONDS):
@@ -2550,10 +2737,17 @@ class ValveConnection:
                     response_future.cancel()
                 # On timeout, try to parse whatever we collected
                 if not packets:
-                    _LOGGER.debug("Timed out waiting for History response from valve %s (no packets)", self._address)
+                    _LOGGER.debug(
+                        "Timed out waiting for History response from valve %s (no packets)",
+                        self._address,
+                    )
                     return True, False
                 packets_list = list(packets)
-                _LOGGER.debug("History timeout for valve %s, collected %d packets, attempting parse", self._address, len(packets_list))
+                _LOGGER.debug(
+                    "History timeout for valve %s, collected %d packets, attempting parse",
+                    self._address,
+                    len(packets_list),
+                )
                 # If we have at least stats packet, try parse; otherwise fail
                 if len(packets_list) < 1:
                     return True, False
@@ -2562,7 +2756,10 @@ class ValveConnection:
             except Exception:
                 if not response_future.done():
                     response_future.cancel()
-                _LOGGER.exception("Unexpected error waiting for History response from valve %s", self._address)
+                _LOGGER.exception(
+                    "Unexpected error waiting for History response from valve %s",
+                    self._address,
+                )
                 return True, False
 
             # Parse collected packets
@@ -2712,7 +2909,10 @@ class ValveConnection:
 
             if target_service_uuid is not None:
                 service_uuid_value = getattr(service, "uuid", None)
-                if not isinstance(service_uuid_value, str) or service_uuid_value.lower() != target_service_uuid:
+                if (
+                    not isinstance(service_uuid_value, str)
+                    or service_uuid_value.lower() != target_service_uuid
+                ):
                     continue
 
             properties = set(getattr(characteristic, "properties", ()) or ())
@@ -2879,10 +3079,14 @@ class ValveConnection:
             if advertisement is not None:
                 # Metered softeners use position 5 as salt dose (pounds).
                 valve_type = advertisement.valve_type
-                has_salt_dose = valve_type in (
-                    "MeteredSoftener",
-                    "CommercialMeteredSoftener",
-                ) or advertisement.is_twin_valve
+                has_salt_dose = (
+                    valve_type
+                    in (
+                        "MeteredSoftener",
+                        "CommercialMeteredSoftener",
+                    )
+                    or advertisement.is_twin_valve
+                )
 
             for idx in range(8):
                 raw = second[3 + idx]
@@ -2952,9 +3156,15 @@ class ValveConnection:
         if not packets:
             return False
         # Filter to only history opcode
-        history_packets = [p for p in packets if len(p) >= 3 and p[0] == 119 and p[1] == 119]
+        history_packets = [
+            p for p in packets if len(p) >= 3 and p[0] == 119 and p[1] == 119
+        ]
         if not history_packets:
-            _LOGGER.debug("Valve %s History: no valid 119 packets in %d", self._address, len(packets))
+            _LOGGER.debug(
+                "Valve %s History: no valid 119 packets in %d",
+                self._address,
+                len(packets),
+            )
             return False
 
         # Need at least stats packet (b==0)
@@ -2967,7 +3177,11 @@ class ValveConnection:
             # Fallback: first packet is stats
             stats = history_packets[0]
             if len(stats) < 17:
-                _LOGGER.debug("Valve %s History stats packet too short: %s", self._address, stats.hex())
+                _LOGGER.debug(
+                    "Valve %s History stats packet too short: %s",
+                    self._address,
+                    stats.hex(),
+                )
                 return False
 
         # Use parser that mimics CsStatusAndHistoryPacket counters
@@ -2986,7 +3200,11 @@ class ValveConnection:
                 return bool((u8(value) >> bit) & 1)
 
             advertisement = self._advertisement
-            firmware_version = advertisement.firmware_version if advertisement and advertisement.firmware_version is not None else 500
+            firmware_version = (
+                advertisement.firmware_version
+                if advertisement and advertisement.firmware_version is not None
+                else 500
+            )
             is_twin = advertisement.is_twin_valve if advertisement else False
 
             # --- Stats parsing (packet[2]==0 path) ---
@@ -3007,13 +3225,21 @@ class ValveConnection:
 
             if len(stats) >= 17:
                 # Use firmness length check like Java: >=19 for modern, else 17
-                if len(stats) >= 19 or (len(stats) >= 17 and firmware_version <= 210 and not is_twin):
+                if len(stats) >= 19 or (
+                    len(stats) >= 17 and firmware_version <= 210 and not is_twin
+                ):
                     try:
                         current_flow = get_double_high_low(stats[4], stats[3]) / 100.0
-                        total_gallons = int(get_double_high_med_low(stats[7], stats[6], stats[5]))
-                        total_gallons_resettable = int(get_double_high_med_low(stats[10], stats[9], stats[8]))
+                        total_gallons = int(
+                            get_double_high_med_low(stats[7], stats[6], stats[5])
+                        )
+                        total_gallons_resettable = int(
+                            get_double_high_med_low(stats[10], stats[9], stats[8])
+                        )
                         regen_counter = int(get_double_high_low(stats[12], stats[11]))
-                        regen_counter_resettable = int(get_double_high_low(stats[14], stats[13]))
+                        regen_counter_resettable = int(
+                            get_double_high_low(stats[14], stats[13])
+                        )
                         regen_active = u8(stats[15])
                         if firmware_version >= 410 or is_twin:
                             flags = u8(stats[16])
@@ -3026,7 +3252,9 @@ class ValveConnection:
                             if len(stats) > 17:
                                 is_prefill = (u8(stats[17]) & 8) != 0
                     except Exception:
-                        _LOGGER.exception("Error parsing History stats for valve %s", self._address)
+                        _LOGGER.exception(
+                            "Error parsing History stats for valve %s", self._address
+                        )
 
             # --- Graph parsing ---
             # Initialize arrays
@@ -3052,7 +3280,9 @@ class ValveConnection:
                     if 0 <= off < 62:
                         water_day[off] = float(u8(packet[idx]) * 10.0)
 
-            def set_regen(packet: bytes, start: int, end: int, offset: int, initial: bool) -> None:
+            def set_regen(
+                packet: bytes, start: int, end: int, offset: int, initial: bool
+            ) -> None:
                 nonlocal regen_counter_pkt
                 regen_counter_pkt += 1
                 if regen_complete:
@@ -3090,7 +3320,11 @@ class ValveConnection:
                     continue
                 b = u8(pkt[2])
                 # Phase 1: counters zero check
-                if (day_counter == 0 or day_counter > 3) and (regen_counter_pkt == 0 or regen_counter_pkt > 4) and (peak_counter == 0 or peak_counter > 3):
+                if (
+                    (day_counter == 0 or day_counter > 3)
+                    and (regen_counter_pkt == 0 or regen_counter_pkt > 4)
+                    and (peak_counter == 0 or peak_counter > 3)
+                ):
                     if b == 0:
                         continue  # stats already handled
                     if b == 1 and len(pkt) == 20:
@@ -3153,7 +3387,11 @@ class ValveConnection:
             graphs_complete = day_complete and regen_complete and peak_complete
             # If not complete, but we have data, still store what we have (best effort)
             # Only consider success if at least stats parsed or some graph data non-zero
-            has_graph_data = any(v != 0 for v in water_day) or any(v != 0 for v in water_regen) or any(v != 0 for v in peak_flow)
+            has_graph_data = (
+                any(v != 0 for v in water_day)
+                or any(v != 0 for v in water_regen)
+                or any(v != 0 for v in peak_flow)
+            )
             data = ValveHistoryData(
                 current_water_flow=current_flow,
                 total_gallons=total_gallons,
@@ -3168,7 +3406,9 @@ class ValveConnection:
                 bypass_state=bypass_state,
                 display_off=display_off,
                 water_usage_day=tuple(water_day) if has_graph_data or True else None,
-                water_usage_regen=tuple(water_regen) if has_graph_data or True else None,
+                water_usage_regen=tuple(water_regen)
+                if has_graph_data or True
+                else None,
                 peak_flow=tuple(peak_flow) if has_graph_data or True else None,
             )
             # Consider success if stats at least present
@@ -3176,13 +3416,26 @@ class ValveConnection:
             if success:
                 self._history_data = data
                 self._notify_history_listeners(data)
-                _LOGGER.info("Valve %s History parsed: total=%s regen=%s flow=%s graphs_complete=%s", self._address, total_gallons, regen_counter, current_flow, graphs_complete)
+                _LOGGER.info(
+                    "Valve %s History parsed: total=%s regen=%s flow=%s graphs_complete=%s",
+                    self._address,
+                    total_gallons,
+                    regen_counter,
+                    current_flow,
+                    graphs_complete,
+                )
                 return True
             else:
-                _LOGGER.debug("Valve %s History parse failed: no valid data in %d packets", self._address, len(history_packets))
+                _LOGGER.debug(
+                    "Valve %s History parse failed: no valid data in %d packets",
+                    self._address,
+                    len(history_packets),
+                )
                 return False
         except Exception:
-            _LOGGER.exception("Error while parsing History response from valve %s", self._address)
+            _LOGGER.exception(
+                "Error while parsing History response from valve %s", self._address
+            )
             return False
 
     def _notify_history_listeners(self, data: ValveHistoryData | None) -> None:
@@ -3190,7 +3443,9 @@ class ValveConnection:
             try:
                 listener(data)
             except Exception:
-                _LOGGER.exception("Unexpected error in History listener for valve %s", self._address)
+                _LOGGER.exception(
+                    "Unexpected error in History listener for valve %s", self._address
+                )
 
     def _handle_dashboard_packets(self, packets: list[bytes]) -> None:
         """Parse and store the most recent Dashboard response from the valve."""
@@ -3250,6 +3505,18 @@ class ValveConnection:
             is_in_aeration = not bool(second[12] & 0x01)
             tank_in_service = second[18]
 
+            brine_tank: BrineTank | None = None
+            if second[13] != 255:
+                brine_tank = BrineTank(
+                    tank=second[15] or BrineTankSize.Tank16x33,
+                    refill_time=second[17],
+                    fill_height=second[16],
+                    regens_remaining=second[13],
+                    regens_remaining_low_salt=second[14],
+                    twin_valve=self.device_list_is_twin_valve,
+                    commercial=self._advertisement.valve_type == "CommercialMeteredSoftener"
+                )
+
             graph_values = (
                 list(third[3:20])
                 + list(fourth[0:20])
@@ -3285,6 +3552,7 @@ class ValveConnection:
                 is_in_aeration=is_in_aeration,
                 tank_in_service=tank_in_service,
                 graph_usage_ten_gallons=tuple(graph_values),
+                brine_tank=brine_tank,
             )
         except Exception:  # pragma: no cover - parsing errors should be rare
             _LOGGER.exception(
@@ -3295,9 +3563,7 @@ class ValveConnection:
         self._dashboard_data = dashboard
         self._notify_dashboard_listeners(dashboard)
 
-    def _notify_dashboard_listeners(
-        self, dashboard: ValveDashboardData | None
-    ) -> None:
+    def _notify_dashboard_listeners(self, dashboard: ValveDashboardData | None) -> None:
         """Notify registered callbacks about a Dashboard data update."""
 
         for listener in list(self._dashboard_listeners):
@@ -3374,9 +3640,7 @@ class ValveConnection:
         # e.g. 04 40 -> 4.40 vs advertised C3.63.
         if len(packet) >= 7:
             try:
-                major, minor, version = decode_firmware_version(
-                    packet[5], packet[6]
-                )
+                major, minor, version = decode_firmware_version(packet[5], packet[6])
                 adv = self._advertisement
                 if adv is not None and version != adv.firmware_version:
                     # Update advertisement in place so format_firmware_version matches the app
@@ -3657,7 +3921,9 @@ class ValveConnectionManager:
                 connection.schedule_poll()
                 # Also kick off separate advanced/history fetches shortly after setup
                 # (staggered so dashboard wins first connection)
-                self._hass.loop.call_later(5, connection.schedule_advanced_settings_poll)
+                self._hass.loop.call_later(
+                    5, connection.schedule_advanced_settings_poll
+                )
                 self._hass.loop.call_later(15, connection.schedule_history_poll)
 
         self._remove_listener = self._discovery_manager.async_add_listener(
@@ -3667,7 +3933,9 @@ class ValveConnectionManager:
             self._hass, self._handle_poll_interval, CONNECTION_POLL_INTERVAL
         )
         self._cancel_advanced_interval = async_track_time_interval(
-            self._hass, self._handle_advanced_poll_interval, _ADVANCED_SETTINGS_POLL_INTERVAL
+            self._hass,
+            self._handle_advanced_poll_interval,
+            _ADVANCED_SETTINGS_POLL_INTERVAL,
         )
         self._cancel_history_interval = async_track_time_interval(
             self._hass, self._handle_history_poll_interval, _HISTORY_POLL_INTERVAL
@@ -3935,9 +4203,7 @@ class ValveConnectionManager:
         )
         return value
 
-    def get_passcode(
-        self, address: str | None = None
-    ) -> ValvePasscodeConfiguration:
+    def get_passcode(self, address: str | None = None) -> ValvePasscodeConfiguration:
         """Return the configured passcode details for a valve address."""
 
         overrides = self._config_entry.options.get(CONF_DEVICE_PASSCODES, {})

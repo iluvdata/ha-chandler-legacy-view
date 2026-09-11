@@ -1,14 +1,100 @@
 """Data models for the Chandler Legacy View integration."""
 
-from __future__ import annotations
-
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
+from enum import IntEnum
+from math import floor
 
 _METERED_SOFTENER_VALVE_TYPES = {
     "MeteredSoftener",
     "CommercialMeteredSoftener",
 }
+
+
+class BrineTankSize(IntEnum):
+    """Brine Tank Sizes."""
+
+    Unknown = 0
+    Tank16x33 = 16
+    Tank18x40 = 18
+    Tank24x50 = 24
+    Tank30x50 = 30
+
+    @property
+    def get_max_fill_height(self) -> int:
+        """Get the maximun fill height for a particular tank."""
+        if self in {BrineTankSize.Tank24x50, BrineTankSize.Tank30x50}:
+            return 50
+        if self == BrineTankSize.Tank18x40:
+            return 40
+        return 33
+
+    @property
+    def get_default_fill_height(self) -> int:
+        """Get the default (recommended fill height)."""
+        if self > 16:
+            return 31
+        return 24
+
+
+@dataclass(slots=True)
+class BrineTank:
+    """Representation of a brine tank."""
+
+    tank: BrineTankSize
+    refill_time: int
+    fill_height: int
+    regens_remaining: int
+    regens_remaining_low_salt: int
+    commercial: bool = False
+    twin_valve: bool = False
+
+    @property
+    def absorbed_salt_per_regen(self) -> float:
+        """Calculate salt use per regen."""
+        return (
+            self.refill_time
+            if self.commercial or self.twin_valve
+            else 1.5 * self.refill_time
+        )
+
+    @property
+    def total_salt(self) -> float:
+        """Calculate total salt in lbs."""
+        multiplier: float
+        if self.tank == BrineTankSize.Tank18x40.value:
+            multiplier = 10.4
+        elif self.tank == BrineTankSize.Tank24x50.value:
+            multiplier = 18.6
+        elif self.tank != BrineTankSize.Tank30x50.value:
+            multiplier = 8.1
+        else:
+            multiplier = 29.55
+        return self.fill_height * multiplier
+
+    def set_salt_level(self, level: int) -> None:
+        """Set salt level in lbs."""
+        self.regens_remaining = floor(level / self.absorbed_salt_per_regen)
+
+    def set_tank(self, tank: BrineTankSize) -> None:
+        """Set the brine tank size."""
+        self.tank = tank
+        self.fill_height = tank.get_default_fill_height
+        self.regens_remaining_low_salt = (
+            floor(self.total_salt / self.absorbed_salt_per_regen) * 0.2
+        )
+
+    @property
+    def salt_remaining(self) -> float:
+        """Salt remaining in lbs."""
+        return self.absorbed_salt_per_regen * self.regens_remaining
+
+    @property
+    def salt_remaining_percent(self) -> int:
+        """Percent salt remaning."""
+        if self.total_salt == 0:
+            return 0
+        return self.salt_remaining / self.total_salt
 
 
 @dataclass(slots=True)
@@ -125,4 +211,4 @@ class ValveDashboardData:
     is_in_aeration: bool
     tank_in_service: int
     graph_usage_ten_gallons: tuple[int, ...]
-
+    brine_tank: BrineTank | None = None

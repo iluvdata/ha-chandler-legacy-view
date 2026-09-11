@@ -1,10 +1,11 @@
 """Base entities for the Chandler Legacy View integration."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
+import logging
 
+from homeassistant.core import async_get_hass_or_none
 from homeassistant.helpers.entity import DeviceInfo, Entity
+from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH
 
 from .const import (
     DEFAULT_FRIENDLY_NAME,
@@ -14,7 +15,9 @@ from .const import (
     FRIENDLY_NAME_OVERRIDES,
 )
 from .models import ValveAdvertisement
+from .device_registry import async_get_discovery_device_id
 
+_LOGGER = logging.getLogger(__name__)
 
 _CLACK_NAME_PREFIX = "cl_"
 _LOW_SALT_CAPABLE_NAMES = {
@@ -173,10 +176,7 @@ def format_firmware_version(advertisement: ValveAdvertisement) -> str | None:
 
     firmware_version = advertisement.firmware_version
     if firmware_version is None:
-        if (
-            advertisement.firmware_major is None
-            or advertisement.firmware_minor is None
-        ):
+        if advertisement.firmware_major is None or advertisement.firmware_minor is None:
             return None
         firmware_version = (
             advertisement.firmware_major * 100 + advertisement.firmware_minor
@@ -207,16 +207,27 @@ class ChandlerValveEntity(Entity):
     def device_info(self) -> DeviceInfo:
         """Return metadata for the device registry."""
 
+        # TODO: This needs to be fixed
+        via_device_id: str | None = None
+        if self.hass is None and (_hass := async_get_hass_or_none()):
+            self.hass = _hass
+            _LOGGER.debug("hass not set, had to pull from current thread.")
+
+        via_device_id = async_get_discovery_device_id(self.hass)
+
         return DeviceInfo(
             identifiers={(DOMAIN, self._advertisement.address)},
+            connections={(CONNECTION_BLUETOOTH, self._advertisement.address)},
             name=self._compute_name(self._advertisement),
             manufacturer=DEFAULT_MANUFACTURER,
             model=self._advertisement.model,
-            via_device=(DOMAIN, DISCOVERY_VIA_DEVICE_ID),
+            via_device_id=via_device_id,
             sw_version=format_firmware_version(self._advertisement),
         )
 
-    def async_update_from_advertisement(self, advertisement: ValveAdvertisement) -> None:
+    def async_update_from_advertisement(
+        self, advertisement: ValveAdvertisement
+    ) -> None:
         """Store the most recent advertisement seen for this valve."""
 
         self._advertisement = advertisement
@@ -226,4 +237,3 @@ class ChandlerValveEntity(Entity):
         """Generate a user-friendly name for the valve entity."""
 
         return friendly_name_from_advertised_name(advertisement.name)
-

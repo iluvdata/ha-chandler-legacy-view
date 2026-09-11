@@ -1,3 +1,4 @@
 .DS_Store
 .venv-chandler/
 diagnostics/
+custom_components/chandler_legacy_view/__pycache__

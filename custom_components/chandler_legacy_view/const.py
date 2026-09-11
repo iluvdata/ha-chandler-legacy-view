@@ -25,6 +25,7 @@ PLATFORMS: Final[list[Platform]] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -46,7 +47,7 @@ CONNECTION_TIMEOUT_SECONDS: Final = 20
 
 # Default presentation details for discovered devices
 DEFAULT_FRIENDLY_NAME: Final = "Treatment Valve"
-DEFAULT_MANUFACTURER: Final = "Chandler"
+DEFAULT_MANUFACTURER: Final = "Chandler Systems Inc."
 
 # Device registry definitions for the integration's Bluetooth discovery service.
 DISCOVERY_VIA_DEVICE_ID: Final = "bluetooth"
@@ -69,6 +70,7 @@ FRIENDLY_NAME_OVERRIDES: Final[dict[str, str]] = {
 
 # Known Bluetooth local-name prefixes advertised by Chandler Legacy valves.
 VALVE_NAME_PREFIXES: Final[tuple[str, ...]] = ("CS_", "C2_", "CL_")
+
 
 def _case_variants(prefix: str) -> tuple[str, ...]:
     """Return all case permutations for the provided prefix."""

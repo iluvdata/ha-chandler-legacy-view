@@ -1,10 +1,8 @@
 """Sensor platform for Chandler Legacy View valves."""
 
-from __future__ import annotations
-
-import logging
 from collections.abc import Callable
 from datetime import datetime
+import logging
 
 from homeassistant.components.bluetooth import BluetoothChange
 from homeassistant.components.sensor import (
@@ -19,17 +17,13 @@ from homeassistant.const import (
     UnitOfVolume,
     UnitOfVolumeFlowRate,
 )
-
-# Home Assistant does not currently expose a dedicated water hardness unit
-# constant, so we keep using the unit string Chandler devices report.
-WATER_HARDNESS_GRAINS_PER_GALLON = "grains_per_gallon"
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DATA_CONNECTION_MANAGER, DATA_DISCOVERY_MANAGER, DOMAIN
 from .connection import ValveConnection, ValveConnectionManager
+from .const import DATA_CONNECTION_MANAGER, DATA_DISCOVERY_MANAGER, DOMAIN
 from .cycle import cycle_phase, cycle_remaining_seconds
 from .dashboard import format_time_of_day
 from .discovery import BLUETOOTH_LOST_CHANGES, ValveDiscoveryManager
@@ -43,6 +37,10 @@ from .models import (
 from .regeneration import regeneration_is_active
 
 _LOGGER = logging.getLogger(__name__)
+
+# Home Assistant does not currently expose a dedicated water hardness unit
+# constant, so we keep using the unit string Chandler devices report.
+WATER_HARDNESS_GRAINS_PER_GALLON = "grains/gal"
 
 
 class ValveDashboardSensor(ChandlerValveEntity, SensorEntity):
@@ -131,9 +129,7 @@ class ValveDashboardSensor(ChandlerValveEntity, SensorEntity):
         raise NotImplementedError
 
     @callback
-    def _handle_dashboard_update(
-        self, dashboard: ValveDashboardData | None
-    ) -> None:
+    def _handle_dashboard_update(self, dashboard: ValveDashboardData | None) -> None:
         """Handle updates from the dashboard poller."""
 
         self._update_from_dashboard(dashboard, write_state=True)
@@ -179,9 +175,7 @@ class ValveWaterHardnessSensor(ValveDashboardSensor):
             name_suffix="Water Hardness",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.water_hardness
@@ -200,9 +194,7 @@ class ValveTimeOfDaySensor(ValveDashboardSensor):
             name_suffix="Time of Day",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> str | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> str | None:
         if dashboard is None:
             return None
         return format_time_of_day(
@@ -296,9 +288,13 @@ class ValveLastClockSyncSensor(ValveDiagnosticTimestampSensor):
 class ValveRegenerationTimeSensor(ValveDashboardSensor):
     """Represent the scheduled regeneration time of day (when the system regenerates)."""
 
-    _attr_device_class = SensorDeviceClass.TIMESTAMP if False else None  # keep as string time, not timestamp entity
+    _attr_device_class = (
+        SensorDeviceClass.TIMESTAMP if False else None
+    )  # keep as string time, not timestamp entity
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         super().__init__(
             advertisement,
             connection,
@@ -311,7 +307,9 @@ class ValveRegenerationTimeSensor(ValveDashboardSensor):
             return None
         # Dashboard stores hour (1-12) + is_pm flag, no minutes — app shows e.g. "2:00 AM"
         # Use helper with minute 0 for consistent formatting.
-        return format_time_of_day(dashboard.regeneration_time_hour, 0, dashboard.regeneration_time_is_pm)
+        return format_time_of_day(
+            dashboard.regeneration_time_hour, 0, dashboard.regeneration_time_is_pm
+        )
 
 
 class ValveBatteryCapacitySensor(ValveDashboardSensor):
@@ -331,9 +329,7 @@ class ValveBatteryCapacitySensor(ValveDashboardSensor):
             name_suffix="Battery",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.battery_capacity
@@ -355,9 +351,7 @@ class ValveSoftWaterRemainingSensor(ValveDashboardSensor):
             name_suffix="Soft Water Remaining",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.water_remaining_until_regeneration
@@ -384,9 +378,7 @@ class ValveDaysUntilRegenerationSensor(ValveDashboardSensor):
             return "Days Until Regeneration"
         return "Days Until Backwash"
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.air_recharge
@@ -396,7 +388,8 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
     """Represent the total water usage recorded for the current day."""
 
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_device_class = SensorDeviceClass.WATER
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
@@ -408,9 +401,7 @@ class ValveWaterUsageTodaySensor(ValveDashboardSensor):
             name_suffix="Water Usage Today",
         )
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return dashboard.water_usage
@@ -463,15 +454,11 @@ class ValveCycleRemainingSensor(ValveDashboardSensor):
             return "Regeneration Remaining"
         return "Backwash Remaining"
 
-    def _extract_native_value(
-        self, dashboard: ValveDashboardData | None
-    ) -> int | None:
+    def _extract_native_value(self, dashboard: ValveDashboardData | None) -> int | None:
         if dashboard is None:
             return None
         return cycle_remaining_seconds(
-            regeneration_is_active(
-                dashboard.regen_active, dashboard.prefill_soak_mode
-            ),
+            regeneration_is_active(dashboard.regen_active, dashboard.prefill_soak_mode),
             dashboard.pos_time,
             dashboard.pos_option_seconds,
         )
@@ -508,9 +495,7 @@ class ValveCycleStateSensor(ValveDashboardSensor):
         if dashboard is None:
             return None
         return cycle_phase(
-            regeneration_is_active(
-                dashboard.regen_active, dashboard.prefill_soak_mode
-            ),
+            regeneration_is_active(dashboard.regen_active, dashboard.prefill_soak_mode),
             dashboard.regen_cycle_position,
         )
 
@@ -594,7 +579,7 @@ class ValveRegenPositionSensor(ChandlerValveEntity, SensorEntity):
                 return self._AERATION_POSITION_NAMES[self._position_index]
             except IndexError:
                 pass
-        return f"Regen Position {self._position_index+1}"
+        return f"Regen Position {self._position_index + 1}"
 
     def _position_unit(self, adv: ValveAdvertisement | None) -> str:
         if self._is_salt_dose():
@@ -615,7 +600,7 @@ class ValveRegenPositionSensor(ChandlerValveEntity, SensorEntity):
         super().__init__(advertisement)
         self._connection = connection
         self._position_index = position_index  # 0-based, P1..P8 maps to 49-56
-        self._attr_unique_id = f"{advertisement.address}_regen_pos_{position_index+1}"
+        self._attr_unique_id = f"{advertisement.address}_regen_pos_{position_index + 1}"
         display = self._position_display_name(advertisement)
         self._attr_name = f"{self._attr_name} {display}"
         self._attr_available = False
@@ -656,9 +641,7 @@ class ValveRegenPositionSensor(ChandlerValveEntity, SensorEntity):
         self._attr_native_value = data.positions[self._position_index]
 
     @callback
-    def _handle_advanced_update(
-        self, data: ValveAdvancedSettingsData | None
-    ) -> None:
+    def _handle_advanced_update(self, data: ValveAdvancedSettingsData | None) -> None:
         self._update_from_advanced_data(data)
         if self.hass is not None:
             self.async_write_ha_state()
@@ -697,7 +680,10 @@ class ValveRegenPositionSensor(ChandlerValveEntity, SensorEntity):
             attrs["position_value"] = None
         if defaults is not None and len(defaults.positions) > self._position_index:
             attrs["default_value"] = defaults.positions[self._position_index]
-        if data is not None and len(data.position_not_adjustable) > self._position_index:
+        if (
+            data is not None
+            and len(data.position_not_adjustable) > self._position_index
+        ):
             attrs["not_adjustable"] = data.position_not_adjustable[self._position_index]
         return attrs
 
@@ -735,9 +721,13 @@ class ValveHistorySensor(ChandlerValveEntity, SensorEntity):
         self._is_evb019 = advertisement.model in (None, "Evb019")
         self._attr_available = False
         self._update_from_history(connection.history_data, write_state=False)
-        self._remove_history_listener = connection.add_history_listener(self._handle_history_update)
+        self._remove_history_listener = connection.add_history_listener(
+            self._handle_history_update
+        )
 
-    def _apply_name_suffix(self, base_name: str, advertisement: ValveAdvertisement) -> str:
+    def _apply_name_suffix(
+        self, base_name: str, advertisement: ValveAdvertisement
+    ) -> str:
         suffix = self._get_name_suffix(advertisement)
         if suffix:
             return f"{base_name} {suffix}"
@@ -747,7 +737,9 @@ class ValveHistorySensor(ChandlerValveEntity, SensorEntity):
         return self._name_suffix
 
     @callback
-    def async_handle_bluetooth_update(self, advertisement: ValveAdvertisement, change: BluetoothChange) -> None:
+    def async_handle_bluetooth_update(
+        self, advertisement: ValveAdvertisement, change: BluetoothChange
+    ) -> None:
         if change in BLUETOOTH_LOST_CHANGES:
             self._attr_available = False
         else:
@@ -757,7 +749,9 @@ class ValveHistorySensor(ChandlerValveEntity, SensorEntity):
         if self.hass is not None:
             self.async_write_ha_state()
 
-    def async_update_from_advertisement(self, advertisement: ValveAdvertisement) -> None:
+    def async_update_from_advertisement(
+        self, advertisement: ValveAdvertisement
+    ) -> None:
         super().async_update_from_advertisement(advertisement)
         base_name = self._attr_name
         self._attr_name = self._apply_name_suffix(base_name, advertisement)
@@ -768,7 +762,9 @@ class ValveHistorySensor(ChandlerValveEntity, SensorEntity):
             self._remove_history_listener()
             self._remove_history_listener = None
 
-    def _update_from_history(self, data: ValveHistoryData | None, *, write_state: bool) -> None:
+    def _update_from_history(
+        self, data: ValveHistoryData | None, *, write_state: bool
+    ) -> None:
         self._attr_native_value = self._extract_native_value(data)
         # History is infrequent; mark unavailable until first successful fetch
         if not self._is_evb019:
@@ -794,9 +790,16 @@ class ValveHistoryTotalGallonsSensor(ValveHistorySensor):
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_total_gallons", name_suffix="History Total Gallons")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_total_gallons",
+            name_suffix="History Total Gallons",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> int | None:
         return data.total_gallons if data else None
@@ -808,9 +811,16 @@ class ValveHistoryTotalGallonsResettableSensor(ValveHistorySensor):
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.TOTAL
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_total_gallons_resettable", name_suffix="History Total Gallons Resettable")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_total_gallons_resettable",
+            name_suffix="History Total Gallons Resettable",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> int | None:
         return data.total_gallons_resettable if data else None
@@ -821,9 +831,16 @@ class ValveHistoryRegenCounterSensor(ValveHistorySensor):
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_regen_counter", name_suffix="History Regen Count")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_regen_counter",
+            name_suffix="History Regen Count",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> int | None:
         return data.regen_counter if data else None
@@ -834,9 +851,16 @@ class ValveHistoryRegenCounterResettableSensor(ValveHistorySensor):
 
     _attr_state_class = SensorStateClass.TOTAL
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_regen_counter_resettable", name_suffix="History Regen Count Resettable")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_regen_counter_resettable",
+            name_suffix="History Regen Count Resettable",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> int | None:
         return data.regen_counter_resettable if data else None
@@ -848,9 +872,16 @@ class ValveHistoryWaterUsageDaySensor(ValveHistorySensor):
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_water_usage_day", name_suffix="History Water Usage Day")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_water_usage_day",
+            name_suffix="History Water Usage Day",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> float | None:
         if data and data.water_usage_day:
@@ -862,7 +893,10 @@ class ValveHistoryWaterUsageDaySensor(ValveHistorySensor):
     def extra_state_attributes(self) -> dict[str, object]:
         data = self._connection.history_data if hasattr(self, "_connection") else None
         if data and data.water_usage_day:
-            return {"water_usage_day": list(data.water_usage_day), "days": len(data.water_usage_day)}
+            return {
+                "water_usage_day": list(data.water_usage_day),
+                "days": len(data.water_usage_day),
+            }
         return {}
 
 
@@ -872,9 +906,16 @@ class ValveHistoryWaterUsageRegenSensor(ValveHistorySensor):
     _attr_native_unit_of_measurement = UnitOfVolume.GALLONS
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_water_usage_regen", name_suffix="History Water Usage Per Regen")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_water_usage_regen",
+            name_suffix="History Water Usage Per Regen",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> float | None:
         if data and data.water_usage_regen:
@@ -885,7 +926,10 @@ class ValveHistoryWaterUsageRegenSensor(ValveHistorySensor):
     def extra_state_attributes(self) -> dict[str, object]:
         data = self._connection.history_data if hasattr(self, "_connection") else None
         if data and data.water_usage_regen:
-            return {"water_usage_regen": list(data.water_usage_regen), "count": len(data.water_usage_regen)}
+            return {
+                "water_usage_regen": list(data.water_usage_regen),
+                "count": len(data.water_usage_regen),
+            }
         return {}
 
 
@@ -895,9 +939,16 @@ class ValveHistoryPeakFlowSensor(ValveHistorySensor):
     _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.GALLONS_PER_MINUTE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, advertisement: ValveAdvertisement, connection: ValveConnection) -> None:
+    def __init__(
+        self, advertisement: ValveAdvertisement, connection: ValveConnection
+    ) -> None:
         self._connection = connection
-        super().__init__(advertisement, connection, unique_id_suffix="history_peak_flow", name_suffix="History Peak Flow")
+        super().__init__(
+            advertisement,
+            connection,
+            unique_id_suffix="history_peak_flow",
+            name_suffix="History Peak Flow",
+        )
 
     def _extract_native_value(self, data: ValveHistoryData | None) -> float | None:
         if data and data.peak_flow:
@@ -938,9 +989,13 @@ async def async_setup_entry(
     remaining_entities: dict[str, ValveCycleRemainingSensor] = {}
     regen_position_entities: dict[str, list[ValveRegenPositionSensor]] = {}
     history_total_entities: dict[str, ValveHistoryTotalGallonsSensor] = {}
-    history_total_reset_entities: dict[str, ValveHistoryTotalGallonsResettableSensor] = {}
+    history_total_reset_entities: dict[
+        str, ValveHistoryTotalGallonsResettableSensor
+    ] = {}
     history_regen_entities: dict[str, ValveHistoryRegenCounterSensor] = {}
-    history_regen_reset_entities: dict[str, ValveHistoryRegenCounterResettableSensor] = {}
+    history_regen_reset_entities: dict[
+        str, ValveHistoryRegenCounterResettableSensor
+    ] = {}
     history_day_entities: dict[str, ValveHistoryWaterUsageDaySensor] = {}
     history_regen_usage_entities: dict[str, ValveHistoryWaterUsageRegenSensor] = {}
     history_peak_entities: dict[str, ValveHistoryPeakFlowSensor] = {}
@@ -1146,33 +1201,86 @@ async def async_setup_entry(
         if entity is None:
             connection = connection_manager.get_connection(advertisement.address)
             if connection is None:
-                _LOGGER.debug("Delaying %s sensor creation for %s; connection not ready", debug_description, advertisement.address)
+                _LOGGER.debug(
+                    "Delaying %s sensor creation for %s; connection not ready",
+                    debug_description,
+                    advertisement.address,
+                )
                 return None, new_entities
             entity = factory(advertisement, connection)
             entity_map[advertisement.address] = entity
             new_entities.append(entity)
         return entity, new_entities
 
-    def _ensure_history_total_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_total_entities, lambda adv, conn: ValveHistoryTotalGallonsSensor(adv, conn), "history total gallons")
+    def _ensure_history_total_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_total_entities,
+            lambda adv, conn: ValveHistoryTotalGallonsSensor(adv, conn),
+            "history total gallons",
+        )
 
-    def _ensure_history_total_reset_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_total_reset_entities, lambda adv, conn: ValveHistoryTotalGallonsResettableSensor(adv, conn), "history total resettable")
+    def _ensure_history_total_reset_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_total_reset_entities,
+            lambda adv, conn: ValveHistoryTotalGallonsResettableSensor(adv, conn),
+            "history total resettable",
+        )
 
-    def _ensure_history_regen_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_regen_entities, lambda adv, conn: ValveHistoryRegenCounterSensor(adv, conn), "history regen counter")
+    def _ensure_history_regen_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_regen_entities,
+            lambda adv, conn: ValveHistoryRegenCounterSensor(adv, conn),
+            "history regen counter",
+        )
 
-    def _ensure_history_regen_reset_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_regen_reset_entities, lambda adv, conn: ValveHistoryRegenCounterResettableSensor(adv, conn), "history regen resettable")
+    def _ensure_history_regen_reset_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_regen_reset_entities,
+            lambda adv, conn: ValveHistoryRegenCounterResettableSensor(adv, conn),
+            "history regen resettable",
+        )
 
-    def _ensure_history_day_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_day_entities, lambda adv, conn: ValveHistoryWaterUsageDaySensor(adv, conn), "history water day")
+    def _ensure_history_day_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_day_entities,
+            lambda adv, conn: ValveHistoryWaterUsageDaySensor(adv, conn),
+            "history water day",
+        )
 
-    def _ensure_history_regen_usage_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_regen_usage_entities, lambda adv, conn: ValveHistoryWaterUsageRegenSensor(adv, conn), "history water regen")
+    def _ensure_history_regen_usage_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_regen_usage_entities,
+            lambda adv, conn: ValveHistoryWaterUsageRegenSensor(adv, conn),
+            "history water regen",
+        )
 
-    def _ensure_history_peak_entity(advertisement: ValveAdvertisement) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
-        return _ensure_history_entity(advertisement, history_peak_entities, lambda adv, conn: ValveHistoryPeakFlowSensor(adv, conn), "history peak flow")
+    def _ensure_history_peak_entity(
+        advertisement: ValveAdvertisement,
+    ) -> tuple[ValveHistorySensor | None, list[ValveHistorySensor]]:
+        return _ensure_history_entity(
+            advertisement,
+            history_peak_entities,
+            lambda adv, conn: ValveHistoryPeakFlowSensor(adv, conn),
+            "history peak flow",
+        )
 
     EnsureCallback = Callable[
         [ValveAdvertisement],
@@ -1265,8 +1373,12 @@ async def async_setup_entry(
                 ent.async_handle_bluetooth_update(advertisement, change)
             return
 
-        results = [ensure_callback(advertisement) for ensure_callback in ensure_callbacks]
-        history_results = [ensure_cb(advertisement) for ensure_cb in ensure_history_callbacks]
+        results = [
+            ensure_callback(advertisement) for ensure_callback in ensure_callbacks
+        ]
+        history_results = [
+            ensure_cb(advertisement) for ensure_cb in ensure_history_callbacks
+        ]
 
         new_entities: list[SensorEntity] = []
         for _, created in results:
