@@ -8,9 +8,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.typing import ConfigType
 
+from .connection import ValveConnectionManager
 from .const import (
     CONF_DEFAULT_PASSCODE,
     CONF_DEVICE_PASSCODES,
@@ -24,12 +26,12 @@ from .const import (
     DOMAIN,
     PLATFORMS,
 )
-from .connection import ValveConnectionManager
 from .discovery import ValveDiscoveryManager
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_SCHEMA = {}
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Chandler Legacy View integration via YAML."""
@@ -86,7 +88,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def get_configured_passcode(entry: ConfigEntry, address: str | None = None) -> str | None:
+def get_configured_passcode(
+    entry: ConfigEntry, address: str | None = None
+) -> str | None:
     """Return the configured passcode for a valve address."""
 
     overrides = entry.options.get(CONF_DEVICE_PASSCODES, {})
