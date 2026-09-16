@@ -140,7 +140,7 @@ class ValvePresentFlowSensor(ValveDashboardSensor):
 
     _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.GALLONS_PER_MINUTE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_device_class = SensorDeviceClass.WATER
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
 
     def __init__(
         self, advertisement: ValveAdvertisement, connection: ValveConnection
